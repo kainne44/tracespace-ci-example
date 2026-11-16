@@ -1,0 +1,26 @@
+{
+  "name": "tracespace-ci-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Example: a small autonomy stack wired to Trace.Space with GitHub Actions: per-variant parameters, Test Runs, a traceability gate, commit/PR links on items and cross-checked draw.io architecture diagrams.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node trace/run-tests.mjs",
+    "typecheck": "tsc -p .",
+    "trace:params": "node trace/pull-params.mjs",
+    "trace:push": "node trace/push-results.mjs",
+    "trace:gate": "node trace/gate.mjs",
+    "trace:link": "node trace/link.mjs",
+    "diagrams": "node trace/diagrams.mjs",
+    "model:check": "node tools/code-model.mjs check model/autonomy-stack.model.json",
+    "model:render": "node tools/code-model.mjs render model/autonomy-stack.model.json --out docs/architecture"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT"
+}

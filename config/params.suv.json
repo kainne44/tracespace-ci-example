@@ -1,0 +1,51 @@
+{
+  "variant": "suv",
+  "source": {
+    "variantId": "9c29a924-7f2e-4d12-8241-bd35a2406f10",
+    "title": "SUV"
+  },
+  "parameters": {
+    "Braking distance": {
+      "value": 135,
+      "unit": "ft",
+      "version": 2,
+      "id": "01a1c66d-f21f-7af7-9033-1ec79ea84ef7"
+    },
+    "Lidar detection range": {
+      "value": 120,
+      "unit": "m",
+      "version": 3,
+      "id": "01a1c66d-f63b-711a-b46c-1eeb96c81845"
+    },
+    "Max gross mass": {
+      "value": 2400,
+      "unit": "kg",
+      "version": 2,
+      "id": "01a1c66d-f331-7449-9c2a-2c3008758903"
+    },
+    "Max operating speed": {
+      "value": 65,
+      "unit": "mph",
+      "version": 1,
+      "id": "01a1c66d-f42b-7048-8076-d948d7a17d7f"
+    },
+    "Max turn speed": {
+      "value": 30,
+      "unit": "mph",
+      "version": 3,
+      "id": "01a1c66d-efb4-76c8-95c7-11bd95b5d9c9"
+    },
+    "Min camera frame rate": {
+      "value": 30,
+      "unit": "fps",
+      "version": 1,
+      "id": "01a1c66d-f542-75b5-bb5d-a2ce3aacaeba"
+    },
+    "Sensor mount height": {
+      "value": 1.75,
+      "unit": "m",
+      "version": 2,
+      "id": "01a1c66d-f125-7cec-9f69-07549d7bdfc6"
+    }
+  }
+}

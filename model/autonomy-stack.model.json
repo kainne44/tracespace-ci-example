@@ -1,0 +1,149 @@
+{
+  "name": "autonomy-stack",
+  "doc": "The VanLife autonomy stack: perception, planning and safety modules shared by the sedan, SUV and van.",
+  "items": [
+    { "name": "SensorFrame", "doc": "All detections captured at one instant.", "fields": ["captureMs: Real", "detections: Detection[*]"], "code": "src/perception/types.ts#SensorFrame" },
+    { "name": "Detection", "doc": "One raw detection from one sensor, in vehicle coordinates.", "fields": ["sensor: SensorId", "x: Real", "y: Real", "label: ObjectClass?", "heightM: Real?", "speedMps: Real?", "inCrosswalk: Boolean?"], "code": "src/perception/types.ts#Detection" },
+    { "name": "ObjectList", "doc": "The fused object list published to the planner.", "fields": ["captureMs: Real", "publishMs: Real", "objects: TrackedObject[*]"], "code": "src/perception/types.ts#ObjectList" },
+    { "name": "TrackedObject", "doc": "A fused, classified object.", "fields": ["x: Real", "y: Real", "cls: ObjectClass", "sensors: SensorId[*]", "inCrosswalk: Boolean?"], "code": "src/perception/types.ts#TrackedObject" },
+    { "name": "SensorHealth", "doc": "Whether one sensor reported recently.", "fields": ["sensor: SensorId", "ok: Boolean", "atMs: Real"], "code": "src/perception/types.ts#SensorHealth" },
+    { "name": "ObjectClass", "doc": "What a tracked object is.", "fields": [], "values": ["pedestrian", "cyclist", "vehicle", "animal", "static"], "code": "src/perception/types.ts#ObjectClass" },
+    { "name": "SensorId", "doc": "The perception sensors.", "fields": [], "values": ["camera-front", "lidar-primary", "radar-front", "radar-rear"], "code": "src/perception/types.ts#SensorId" },
+    { "name": "BrakeCommand", "doc": "A requested deceleration and why.", "fields": ["decelMps2: Real", "reason: BrakeReason"], "code": "src/safety/brake-controller.ts#BrakeCommand" },
+    { "name": "BrakeReason", "doc": "Why braking was requested.", "fields": [], "values": ["stop", "yield", "geofence", "mrc", "slow"], "code": "src/safety/brake-controller.ts#BrakeReason" },
+    { "name": "BrakeResponse", "doc": "The deceleration delivered, healthy channels and hazard lights.", "fields": ["decelMps2: Real", "channelsOk: Real", "hazards: Boolean"], "code": "src/safety/brake-controller.ts#BrakeResponse" }
+  ],
+  "portTypes": [
+    {
+      "name": "ObjectSource", "doc": "Fused perception output, one frame at a time.",
+      "provides": [{ "name": "fuse", "params": ["frame: SensorFrame"], "result": "ObjectList" }],
+      "code": "src/perception/fusion.ts#ObjectSource"
+    },
+    {
+      "name": "HealthMonitor", "doc": "Per-sensor health for the safety supervisor.",
+      "provides": [{ "name": "health", "params": ["nowMs: Real"], "result": "SensorHealth[*]" }],
+      "code": "src/perception/fusion.ts#HealthMonitor"
+    },
+    {
+      "name": "MountGeometry", "doc": "Lidar mounting geometry the fusion module is calibrated for.",
+      "provides": [{ "name": "heightM", "params": [], "result": "Real" }, { "name": "blindZoneRadiusM", "params": [], "result": "Real" }],
+      "code": "src/perception/lidar-mount.ts#MountGeometry"
+    },
+    {
+      "name": "BrakeActuator", "doc": "Deceleration commands to the brake controller.",
+      "provides": [{ "name": "apply", "params": ["cmd: BrakeCommand"], "result": "BrakeResponse" }, { "name": "maxDecelMps2", "params": [], "result": "Real" }],
+      "code": "src/safety/brake-controller.ts#BrakeActuator"
+    },
+    {
+      "name": "BrakeAssist", "doc": "Extra brake force from an assist unit.",
+      "provides": [{ "name": "assistForceN", "params": ["massKg: Real", "channelsOk: Real"], "result": "Real" }],
+      "code": "src/safety/brake-controller.ts#BrakeAssist"
+    }
+  ],
+  "classifiers": [
+    { "name": "AutonomyStack", "doc": "The stack wired for one vehicle variant.", "ports": [], "code": "src/stack.ts#buildStack" },
+    {
+      "name": "LidarMount", "doc": "Roof bracket holding the primary lidar at the variant's mount height.",
+      "ports": [{ "name": "geometry", "type": "MountGeometry" }],
+      "code": "src/perception/lidar-mount.ts#LidarMount"
+    },
+    {
+      "name": "SensorFusion", "doc": "Fuses camera, lidar and radar detections into one object list.",
+      "ports": [{ "name": "objects", "type": "ObjectSource" }, { "name": "health", "type": "HealthMonitor" }, { "name": "mount", "type": "~MountGeometry" }],
+      "code": "src/perception/fusion.ts#SensorFusion"
+    },
+    {
+      "name": "MotionPlanner", "doc": "Plans speed: turn limit, lateral acceleration, governor, yielding, geofence, takeover alerts.",
+      "ports": [{ "name": "perception", "type": "~ObjectSource" }, { "name": "brakes", "type": "~BrakeActuator" }],
+      "operations": [
+        { "name": "step", "params": ["frame: SensorFrame", "state: VehicleState", "requestedMps: Real"], "result": "PlanDecision", "kind": "internal" },
+        { "name": "governSpeed", "params": ["requestedMps: Real"], "result": "Real" },
+        { "name": "planTurn", "params": ["radiusM: Real", "requestedMps: Real"], "result": "Real" }
+      ],
+      "behavior": "Planning cycle",
+      "code": "src/planning/motion-planner.ts#MotionPlanner"
+    },
+    {
+      "name": "BrakeController", "doc": "Dual-channel electro-hydraulic brake controller.",
+      "ports": [{ "name": "command", "type": "BrakeActuator" }, { "name": "safety", "type": "BrakeActuator" }, { "name": "assist", "type": "~BrakeAssist" }],
+      "code": "src/safety/brake-controller.ts#BrakeController"
+    },
+    {
+      "name": "CargoBrakeBooster", "doc": "Dual-stage brake booster, fitted to the van only.",
+      "ports": [{ "name": "assist", "type": "BrakeAssist" }],
+      "code": "src/safety/cargo-booster.ts#CargoBrakeBooster"
+    },
+    {
+      "name": "SafetySupervisor", "doc": "Enters a minimal risk condition when a perception sensor is lost.",
+      "ports": [{ "name": "sensors", "type": "~HealthMonitor" }, { "name": "brakes", "type": "~BrakeActuator" }],
+      "operations": [{ "name": "tick", "params": ["nowMs: Real"], "result": "Real", "kind": "internal" }],
+      "behavior": "Sensor loss response",
+      "code": "src/safety/supervisor.ts#SafetySupervisor"
+    },
+    { "name": "VehicleState", "doc": "Position, speed and time to leave the operational design domain.", "ports": [], "data": "src/planning/motion-planner.ts#VehicleState" },
+    { "name": "PlanDecision", "doc": "Target speed, braking and takeover alert from one planning cycle.", "ports": [], "data": "src/planning/motion-planner.ts#PlanDecision" }
+  ],
+  "ibd": {
+    "parts": [
+      {
+        "id": "stack", "name": "stack", "type": "AutonomyStack", "note": "src/stack.ts", "tone": "external",
+        "children": [
+          { "id": "mount", "name": "mount", "type": "LidarMount", "note": "src/perception/lidar-mount.ts", "tone": "files" },
+          { "id": "fusion", "name": "fusion", "type": "SensorFusion", "note": "src/perception/fusion.ts", "tone": "core" },
+          { "id": "planner", "name": "planner", "type": "MotionPlanner", "note": "src/planning/motion-planner.ts", "tone": "core" },
+          { "id": "brakes", "name": "brakes", "type": "BrakeController", "note": "src/safety/brake-controller.ts", "tone": "worker" },
+          { "id": "booster", "name": "booster", "type": "CargoBrakeBooster", "note": "van only", "tone": "worker" },
+          { "id": "supervisor", "name": "supervisor", "type": "SafetySupervisor", "note": "src/safety/supervisor.ts", "tone": "machine" }
+        ]
+      }
+    ],
+    "connectors": [
+      { "from": "fusion.mount", "to": "mount.geometry" },
+      { "from": "planner.perception", "to": "fusion.objects" },
+      { "from": "planner.brakes", "to": "brakes.command" },
+      { "from": "supervisor.sensors", "to": "fusion.health" },
+      { "from": "supervisor.brakes", "to": "brakes.safety" },
+      { "from": "brakes.assist", "to": "booster.assist" }
+    ]
+  },
+  "activities": [
+    {
+      "name": "Planning cycle", "of": "MotionPlanner",
+      "doc": "One planning step: perceive, then yield, stop at the geofence or cruise under the governor.",
+      "nodes": [
+        { "id": "init", "kind": "initial" },
+        { "id": "fuse", "kind": "action", "name": "fuse", "owner": "SensorFusion", "via": "perception", "tone": "core" },
+        { "id": "what", "kind": "decision" },
+        { "id": "yield", "kind": "action", "name": "apply", "owner": "BrakeController", "via": "brakes", "tone": "worker" },
+        { "id": "govern", "kind": "action", "name": "governSpeed", "owner": "MotionPlanner", "tone": "core" },
+        { "id": "end", "kind": "final" }
+      ],
+      "flows": [
+        { "from": "init", "to": "fuse" },
+        { "from": "fuse", "to": "what", "guard": "ObjectList" },
+        { "from": "what", "to": "yield", "guard": "pedestrian in crosswalk or geofence ahead" },
+        { "from": "what", "to": "govern", "guard": "clear" },
+        { "from": "yield", "to": "end" },
+        { "from": "govern", "to": "end" }
+      ]
+    },
+    {
+      "name": "Sensor loss response", "of": "SafetySupervisor",
+      "doc": "Every 10 ms: poll sensor health; on a lost sensor, stop in lane with hazards on.",
+      "nodes": [
+        { "id": "init", "kind": "initial" },
+        { "id": "poll", "kind": "action", "name": "health", "owner": "SensorFusion", "via": "sensors", "tone": "core" },
+        { "id": "ok", "kind": "decision" },
+        { "id": "mrc", "kind": "action", "name": "apply", "owner": "BrakeController", "via": "brakes", "tone": "worker" },
+        { "id": "end", "kind": "final" }
+      ],
+      "flows": [
+        { "from": "init", "to": "poll" },
+        { "from": "poll", "to": "ok", "guard": "SensorHealth[*]" },
+        { "from": "ok", "to": "mrc", "guard": "a sensor is lost" },
+        { "from": "ok", "to": "end", "guard": "all healthy" },
+        { "from": "mrc", "to": "end", "kind": "bound" }
+      ]
+    }
+  ]
+}

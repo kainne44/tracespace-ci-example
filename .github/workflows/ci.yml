@@ -1,0 +1,240 @@
+name: CI + Trace.Space
+
+# Every push and pull request:
+#   model    check the architecture model against the code (no Trace.Space needed)
+#   test     per variant: typecheck and run the tests (against parameters refreshed from the org
+#            when Trace.Space is configured, otherwise against the committed config/params.*.json)
+#   trace    when Trace.Space is configured: render the code model (parts linked to their Design
+#            Elements) and the org architecture, cross-check them, run the traceability gate and
+#            link commits/PRs to items; on main also record Test Runs and commit the refreshed
+#            diagrams and parameters.
+#
+# Trace.Space is "configured" when the repository has the secrets TRACESPACE_CLIENT_ID and
+# TRACESPACE_CLIENT_SECRET (an Integration client of your org) and TRACESPACE_URL (the address you
+# open Trace.Space at, copied from the browser; kept secret so logs don't show it). Without them
+# the build still runs the tests and skips every step that talks to Trace.Space.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      push_results:
+        description: Record Test Runs in Trace.Space
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Credentials are passed only to the steps that call Trace.Space (never to npm ci or the tests).
+# CONNECTED holds just "true"/"false".
+env:
+  # Item links in PR comments and committed diagrams would name your Trace.Space host and org, and this
+  # repository is public, so they're off by default. Set the repository variable TRACESPACE_LINKS=on
+  # in a private repository to get clickable links.
+  TRACESPACE_LINKS: ${{ vars.TRACESPACE_LINKS || 'ids' }}
+  CONNECTED: ${{ secrets.TRACESPACE_CLIENT_ID != '' && secrets.TRACESPACE_CLIENT_SECRET != '' && (secrets.TRACESPACE_URL != '' || secrets.TRACESPACE_API_BASE != '') }}
+  HALF_CONFIGURED: ${{ secrets.TRACESPACE_CLIENT_ID != '' && secrets.TRACESPACE_URL == '' && secrets.TRACESPACE_API_BASE == '' }}
+  DRAWIO_VERSION: 32.6.10
+
+jobs:
+  test:
+    name: test (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [sedan, suv, van]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Pull ${{ matrix.variant }} parameters from Trace.Space
+        if: env.CONNECTED == 'true'
+        env:
+          TRACESPACE_CLIENT_ID: ${{ secrets.TRACESPACE_CLIENT_ID }}
+          TRACESPACE_CLIENT_SECRET: ${{ secrets.TRACESPACE_CLIENT_SECRET }}
+          TRACESPACE_URL: ${{ secrets.TRACESPACE_URL }}
+          TRACESPACE_API_BASE: ${{ secrets.TRACESPACE_API_BASE }}
+        run: node trace/pull-params.mjs ${{ matrix.variant }}
+      - name: Run tests
+        # When connected, the trace job reports failures and fails the build.
+        continue-on-error: ${{ env.CONNECTED == 'true' }}
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: npm test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: results-${{ matrix.variant }}
+          path: |
+            results/${{ matrix.variant }}.json
+            config/params.${{ matrix.variant }}.json
+
+  model:
+    name: code model
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Check the architecture model against the code
+        run: npm run model:check
+
+  trace:
+    needs: [test, model]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit refreshed diagrams on main
+      pull-requests: write # the gate comment
+    steps:
+      - name: Trace.Space address missing
+        if: env.HALF_CONFIGURED == 'true'
+        run: |
+          echo "::error::Add the repository secret TRACESPACE_URL: the address you open Trace.Space at, copied from your browser's address bar"
+          exit 1
+
+      - name: Trace.Space not configured
+        if: env.CONNECTED != 'true'
+        run: |
+          {
+            echo "## Trace.Space steps skipped"
+            echo
+            echo "Add the repository secrets \`TRACESPACE_CLIENT_ID\` and \`TRACESPACE_CLIENT_SECRET\` (an Integration client"
+            echo "of your org) and \`TRACESPACE_URL\` (the address you open Trace.Space at) to pull parameters, gate on"
+            echo "traceability, link items and record Test Runs."
+            echo "See docs/REPRODUCING.md."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.CONNECTED == 'true'
+        with:
+          fetch-depth: 0 # the PR's commit range is scanned for item IDs
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: env.CONNECTED == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - if: env.CONNECTED == 'true'
+        run: npm ci
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.CONNECTED == 'true'
+        with:
+          pattern: results-*
+          merge-multiple: true
+          path: .
+
+      - name: Install draw.io (PNG export)
+        if: env.CONNECTED == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb libgbm1 libasound2t64 >/dev/null
+          curl -fsSL -o /tmp/drawio.deb "https://github.com/jgraph/drawio-desktop/releases/download/v${DRAWIO_VERSION}/drawio-amd64-${DRAWIO_VERSION}.deb"
+          sudo apt-get install -y -qq /tmp/drawio.deb >/dev/null
+          printf '#!/bin/sh\nexec xvfb-run -a /opt/drawio/drawio --no-sandbox --disable-gpu "$@"\n' | sudo tee /usr/local/bin/drawio-headless >/dev/null
+          sudo chmod +x /usr/local/bin/drawio-headless
+          echo "DRAWIO=/usr/local/bin/drawio-headless" >> "$GITHUB_ENV"
+
+      - name: Architecture from the code model, linked to Trace.Space
+        if: env.CONNECTED == 'true'
+        env:
+          TRACESPACE_CLIENT_ID: ${{ secrets.TRACESPACE_CLIENT_ID }}
+          TRACESPACE_CLIENT_SECRET: ${{ secrets.TRACESPACE_CLIENT_SECRET }}
+          TRACESPACE_URL: ${{ secrets.TRACESPACE_URL }}
+          TRACESPACE_API_BASE: ${{ secrets.TRACESPACE_API_BASE }}
+        run: npm run model:render -- --png --tracespace
+
+      - name: Architecture from Trace.Space, cross-checked against the code model
+        if: env.CONNECTED == 'true'
+        env:
+          TRACESPACE_CLIENT_ID: ${{ secrets.TRACESPACE_CLIENT_ID }}
+          TRACESPACE_CLIENT_SECRET: ${{ secrets.TRACESPACE_CLIENT_SECRET }}
+          TRACESPACE_URL: ${{ secrets.TRACESPACE_URL }}
+          TRACESPACE_API_BASE: ${{ secrets.TRACESPACE_API_BASE }}
+        run: node trace/diagrams.mjs --png
+
+      - name: Traceability gate
+        id: gate
+        if: env.CONNECTED == 'true'
+        continue-on-error: true
+        env:
+          TRACESPACE_CLIENT_ID: ${{ secrets.TRACESPACE_CLIENT_ID }}
+          TRACESPACE_CLIENT_SECRET: ${{ secrets.TRACESPACE_CLIENT_SECRET }}
+          TRACESPACE_URL: ${{ secrets.TRACESPACE_URL }}
+          TRACESPACE_API_BASE: ${{ secrets.TRACESPACE_API_BASE }}
+        run: node trace/gate.mjs
+
+      - name: Comment the gate report on the PR
+        if: env.CONNECTED == 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq '[.[] | select(.body | contains("<!-- tracespace-gate -->"))][0].id // empty')
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F body=@results/gate.md >/dev/null
+          else
+            gh pr comment "$PR" --body-file results/gate.md
+          fi
+
+      - name: Link commits and PRs to Trace.Space items
+        if: env.CONNECTED == 'true'
+        env:
+          TRACESPACE_CLIENT_ID: ${{ secrets.TRACESPACE_CLIENT_ID }}
+          TRACESPACE_CLIENT_SECRET: ${{ secrets.TRACESPACE_CLIENT_SECRET }}
+          TRACESPACE_URL: ${{ secrets.TRACESPACE_URL }}
+          TRACESPACE_API_BASE: ${{ secrets.TRACESPACE_API_BASE }}
+        run: node trace/link.mjs
+
+      - name: Record Test Runs in Trace.Space
+        if: >-
+          env.CONNECTED == 'true' && (
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_dispatch' && inputs.push_results))
+        env:
+          TRACESPACE_CLIENT_ID: ${{ secrets.TRACESPACE_CLIENT_ID }}
+          TRACESPACE_CLIENT_SECRET: ${{ secrets.TRACESPACE_CLIENT_SECRET }}
+          TRACESPACE_URL: ${{ secrets.TRACESPACE_URL }}
+          TRACESPACE_API_BASE: ${{ secrets.TRACESPACE_API_BASE }}
+        run: node trace/push-results.mjs
+
+      - name: Commit refreshed diagrams and parameters
+        if: env.CONNECTED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git add docs/architecture config
+          if git diff --cached --quiet; then
+            echo "diagrams and parameters unchanged"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Refresh architecture diagrams and parameters from Trace.Space [skip ci]"
+            git push
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && env.CONNECTED == 'true'
+        with:
+          name: architecture
+          path: |
+            docs/architecture
+            results
+
+      - name: Fail on gate findings
+        if: env.CONNECTED == 'true' && steps.gate.outcome != 'success'
+        run: |
+          echo "::error::Traceability gate failed; see the job summary"
+          exit 1

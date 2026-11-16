@@ -1,0 +1,22 @@
+{
+  "$comment": "Traceability gate policy. Each check is fail | warn | off. accepted_gaps lists requirements known to have no automated or manual verification yet (by display ID, with a reason).",
+  "checks": {
+    "unknown_test_tags": "fail",
+    "failing_tests": "fail",
+    "suspect_traces": "fail",
+    "param_drift": "warn",
+    "unverified_requirements": "warn",
+    "failed_verification_in_org": "warn",
+    "untraced_ids_in_change": "warn",
+    "architecture_drift": "warn"
+  },
+  "trace_types": {
+    "verification": "Verification",
+    "satisfaction": "Satisfaction",
+    "derivation": "Derivation"
+  },
+  "accepted_gaps": {
+    "REQ-X": "Replanning: simulator scenario set not built yet",
+    "REQ-AO": "Fault logging: verified by inspection at release review"
+  }
+}
